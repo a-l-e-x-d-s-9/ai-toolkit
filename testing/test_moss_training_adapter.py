@@ -288,6 +288,29 @@ class MossTrainingAdapterTest(unittest.TestCase):
         for key, value in proj.state_dict().items():
             torch.testing.assert_close(value, stored[key], rtol=0, atol=0)
 
+    def test_prequantized_merge_is_seeded_repeatable_and_signed(self):
+        from toolkit.util.ostris_quant import convert_linear_to_ostris, get_ostris_quantizer
+        for strength in (-1., 1.):
+            with self.subTest(strength=strength):
+                transformer = tiny_transformer()
+                proj = transformer.layers[0].proj.qkv
+                convert_linear_to_ostris(proj, get_ostris_quantizer("convrot8"))
+                clone = copy.deepcopy(transformer)
+                quantizer = proj.ostris_quantizer
+                with mock.patch.object(quantizer, "requantize_", wraps=quantizer.requantize_) as requantize:
+                    model = self.model(strength)
+                    load_training_adapter(model, transformer)
+                self.assertEqual(requantize.call_count, 1)
+                self.assertIsInstance(requantize.call_args.kwargs["stochastic_seed"], int)
+                self.assertEqual(model.assistant_lora.multiplier, -strength)
+                self.assertFalse(model.assistant_lora.is_active)
+                # Changing the global RNG must not change the merge realization.
+                torch.manual_seed(9876)
+                load_training_adapter(self.model(strength), clone)
+                other = clone.layers[0].proj.qkv
+                torch.testing.assert_close(proj.cr8_qdata, other.cr8_qdata, rtol=0, atol=0)
+                torch.testing.assert_close(proj.cr8_scales, other.cr8_scales, rtol=0, atol=0)
+
     @unittest.skipUnless(torch.cuda.is_available(), "CUDA is required for layer offloading")
     def test_inverse_adapter_with_layer_offloading(self):
         from toolkit.memory_management.manager import MemoryManager
@@ -319,6 +342,52 @@ class MossTrainingAdapterTest(unittest.TestCase):
                     self.assertEqual(assistant.torch_multiplier.device.type, "cuda")
                 finally:
                     MemoryManager.detach(transformer)
+
+
+class SeededInt8RoundingTest(unittest.TestCase):
+    def input(self, device):
+        # Exact INT8-grid base with both endpoints present in every row.
+        generator = torch.Generator(device=device).manual_seed(11)
+        codes = torch.randint(-126, 127, (512, 256), device=device, generator=generator)
+        codes[:, 0], codes[:, 1] = 127, -127
+        return codes.float() * .01
+
+    def test_small_signed_updates_survive_without_consuming_global_rng(self):
+        from toolkit.util.convrot_quant import quantize_int8_rows
+        devices = ["cpu"] + (["cuda:0"] if torch.cuda.is_available() else [])
+        for device in devices:
+            base = self.input(device)
+            for sign in (-1, 1):
+                with self.subTest(device=device, sign=sign):
+                    delta = torch.full_like(base, sign * .0005)
+                    q_nearest, scales = quantize_int8_rows(base + delta)
+                    nearest = q_nearest.float() * scales[:, None] - base
+                    state = torch.get_rng_state()
+                    cuda_state = torch.cuda.get_rng_state() if device != "cpu" else None
+                    q, scales = quantize_int8_rows(base + delta, stochastic_seed=1234)
+                    self.assertTrue(torch.equal(state, torch.get_rng_state()))
+                    if cuda_state is not None:
+                        self.assertTrue(torch.equal(cuda_state, torch.cuda.get_rng_state()))
+                    actual = q.float() * scales[:, None] - base
+                    denominator = delta.square().sum()
+                    self.assertLess(abs(float((nearest * delta).sum() / denominator)), .1)
+                    self.assertAlmostEqual(float((actual * delta).sum() / denominator), 1., delta=.1)
+                    repeat, _ = quantize_int8_rows(base + delta, stochastic_seed=1234)
+                    other, _ = quantize_int8_rows(base + delta, stochastic_seed=5678)
+                    torch.testing.assert_close(q, repeat, rtol=0, atol=0)
+                    self.assertFalse(torch.equal(q, other))
+
+    def test_default_rounding_and_zero_rows_are_unchanged(self):
+        from toolkit.util.convrot_quant import quantize_int8_rows
+        x = torch.cat((torch.zeros(1, 256), self.input("cpu")[:3]))
+        expected_scale = x.abs().amax(dim=1) / 127
+        expected_scale = torch.where(expected_scale > 0, expected_scale, torch.ones_like(expected_scale))
+        expected = torch.round(x / expected_scale[:, None]).clamp(-127, 127).to(torch.int8)
+        q, scales = quantize_int8_rows(x)
+        torch.testing.assert_close(q, expected, rtol=0, atol=0)
+        torch.testing.assert_close(scales, expected_scale, rtol=0, atol=0)
+        q, _ = quantize_int8_rows(x[:1], stochastic_seed=1234)
+        self.assertFalse(q.any())
 
 
 if __name__ == "__main__":

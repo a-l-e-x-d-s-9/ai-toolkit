@@ -20,9 +20,11 @@ This is a fragment to add to your existing training configuration. Keep your
 normal MOSS training scheduler, timestep distribution and other settings.
 These options do not select a different training objective or set sample steps.
 
-If the checkpoint contains `W + a * turbo`, use strength `-a`. Training uses
-`checkpoint - a * turbo`; previews apply the inverse, using the loaded checkpoint
-plus the newly trained network. For the MOSS SFT 8-step DMD adapter, configure
+If the checkpoint contains `W + a * turbo`, use strength `-a`. Training attempts
+`checkpoint - a * turbo`; previews apply the inverse adjustment. Quantized
+subtraction/restoration is approximate, so previews are not guaranteed to be
+identical to the original checkpoint plus the newly trained network.
+For the MOSS SFT 8-step DMD adapter, configure
 previews with `sample.sample_steps: 8`, `sample.guidance_scale: 1`, and the normal
 MOSS flowmatch sampler with shift 5. The adapter version and original merge
 strength must match. Track them with each checkpoint.
@@ -37,14 +39,24 @@ At inference, load the newly trained adapter on the original turbo checkpoint
 without an additional copy of the turbo adapter.
 
 The model is adjusted once in memory before post-load quantization and memory
-management. Already quantized checkpoints use the toolkit's dequantize/add/
-requantize merge. Previews use an inverse runtime adapter; they do not repeatedly
+management. Pre-quantized ConvRot8 linears use dequantize/add/requantize with
+seeded stochastic rounding. Small turbo deltas can disappear under nearest
+rounding; stochastic rounding preserves the signed update in expectation.
+Seeds come from each projection's stable name and do not consume the global
+training/sampling RNG. Reloading the same checkpoint and adapter on the same
+device produces the same adjusted weights. CPU and CUDA need not produce
+identical stochastic realizations. Other quantization backends retain the
+toolkit's existing merge behavior.
+
+Previews use an inverse runtime adapter; they do not repeatedly
 requantize the base weights. The assistant stays inactive on CPU between previews.
 On resume the adjustment is reapplied once to the freshly loaded checkpoint.
 The checkpoint file on disk is never rewritten by this loading operation.
 
-INT8 merges and subsequent training/merging can introduce rounding error, so
-subtraction does not promise exact recovery of an earlier full-precision model.
+Stochastic rounding still introduces quantization noise. Preserving the delta's
+direction in expectation is not exact restoration of the earlier weights and
+does not guarantee eight-step quality after a new fine-tune. Compare exported
+adapters on the intended inference checkpoint before judging a training run.
 
 Supported fixed adapters are standard linear LoRAs in dotted Comfy
 (`diffusion_model.*`, `lora_down`/`lora_up`, optional alpha) or PEFT

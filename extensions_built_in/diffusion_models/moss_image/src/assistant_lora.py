@@ -1,5 +1,6 @@
 """Fixed MOSS training adapters, merged once and reversed for previews."""
 
+import hashlib
 import math
 import os
 
@@ -10,6 +11,37 @@ from toolkit.config_modules import NetworkConfig
 from toolkit.lora_special import LoRASpecialNetwork
 
 from .checkpoints import resolve_hub_file
+
+
+def _merge_seed(name):
+    """Stable per-projection seed, independent of Python's randomized hash."""
+    return int.from_bytes(hashlib.sha256(name.encode("utf-8")).digest()[:8], "big") & ((1 << 63) - 1)
+
+
+@torch.no_grad()
+def merge_training_adapter(network, strength):
+    """Merge once; preserve small signed updates on pre-quantized ConvRot8."""
+    from toolkit.util.convrot_quant import ConvRotInt8Quantizer
+
+    network.is_merged_in = True
+    stochastic_modules = 0
+    for module in network.get_all_modules():
+        original = module.org_module[0]
+        quantizer = getattr(original, "ostris_quantizer", None)
+        # Other quantizers (including packed ConvRot variants) retain their
+        # existing merge path. Their storage and quantization rules differ.
+        if type(quantizer) is not ConvRotInt8Quantizer:
+            module.merge_in(merge_weight=strength)
+            continue
+        up, down = module.lora_up.weight, module.lora_down.weight
+        if not up.any() or not down.any():
+            continue  # Do not perturb the base when the adapter is zero.
+        weight = quantizer.dequantize(original)
+        delta = up.to(device=weight.device, dtype=torch.float32) @ down.to(device=weight.device, dtype=torch.float32)
+        weight.add_(delta, alpha=float(strength * module.scale))
+        quantizer.requantize_(original, weight, stochastic_seed=_merge_seed(module.lora_name))
+        stochastic_modules += 1
+    return stochastic_modules
 
 
 def prepare_adapter_weights(model, transformer, state_dict):
@@ -123,7 +155,11 @@ def load_training_adapter(model, transformer):
     network.eval().requires_grad_(False)
     network._update_torch_multiplier()
     model.print_and_status_update(f"Merging MOSS training adapter at strength {strength:g}")
-    network.merge_in(merge_weight=strength)
+    stochastic_modules = merge_training_adapter(network, strength)
+    if stochastic_modules:
+        model.print_and_status_update(
+            f" - seeded stochastic rounding: {stochastic_modules} pre-quantized ConvRot8 projections"
+        )
 
     # Keep the inverse on CPU during training. Previews activate it through
     # BaseModel's existing assistant path; no repeated quantized merges.
