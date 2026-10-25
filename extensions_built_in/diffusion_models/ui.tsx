@@ -1987,6 +1987,8 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
     label: "MOSS-Image SFT",
     group: "image",
     defaults: {
+      "config.process[0].model.assistant_lora_path": [undefined, undefined],
+      "config.process[0].model.assistant_lora_strength": [1, 1],
       // default updates when [selected, unselected] in the UI
       // the vendor repo: its transformer is merged once into the comfy models
       // folder; a .safetensors path (fine-tune / int8 convrot repack) loads as named
@@ -2023,7 +2025,12 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
       ],
     },
     disableSections: ["network.conv"],
-    additionalSections: ["model.layer_offloading", "model.low_vram"],
+    additionalSections: [
+      "model.layer_offloading",
+      "model.low_vram",
+      "model.assistant_lora_path",
+      "model.assistant_lora_strength",
+    ],
   },
   {
     name: "moss_image:base",
@@ -2031,6 +2038,8 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
     generateNameOverride: "MOSS-Image Base",
     group: "image",
     defaults: {
+      "config.process[0].model.assistant_lora_path": [undefined, undefined],
+      "config.process[0].model.assistant_lora_strength": [1, 1],
       // default updates when [selected, unselected] in the UI
       // the vendor repo: Comfy-Org/MOSS-Image base files on disk win, else the
       // repack's bf16 (identical weights) is downloaded
@@ -2067,7 +2076,12 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
       ],
     },
     disableSections: ["network.conv"],
-    additionalSections: ["model.layer_offloading", "model.low_vram"],
+    additionalSections: [
+      "model.layer_offloading",
+      "model.low_vram",
+      "model.assistant_lora_path",
+      "model.assistant_lora_strength",
+    ],
   },
   {
     name: "moss_image:edit",
@@ -2076,6 +2090,8 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
     group: "experimental",
     modelNotes: mossImageEditNotes,
     defaults: {
+      "config.process[0].model.assistant_lora_path": [undefined, undefined],
+      "config.process[0].model.assistant_lora_strength": [1, 1],
       // default updates when [selected, unselected] in the UI
       "config.process[0].model.name_or_path": [
         "OpenMOSS-Team/MOSS-Image-SFT",
@@ -2121,6 +2137,8 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
       "model.layer_offloading",
       "model.qie.match_target_res",
       "model.model_kwargs.kv_cache",
+      "model.assistant_lora_path",
+      "model.assistant_lora_strength",
     ],
   },
   {
@@ -2130,6 +2148,8 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
     group: "experimental",
     modelNotes: mossImageEditNotes,
     defaults: {
+      "config.process[0].model.assistant_lora_path": [undefined, undefined],
+      "config.process[0].model.assistant_lora_strength": [1, 1],
       // default updates when [selected, unselected] in the UI
       "config.process[0].model.name_or_path": [
         "OpenMOSS-Team/MOSS-Image-Base",
@@ -2175,6 +2195,8 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
       "model.layer_offloading",
       "model.qie.match_target_res",
       "model.model_kwargs.kv_cache",
+      "model.assistant_lora_path",
+      "model.assistant_lora_strength",
     ],
   },
   {
