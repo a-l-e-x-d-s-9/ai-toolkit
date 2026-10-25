@@ -14,6 +14,8 @@
 ``org/repo/file``) also load. Comfy files on disk take precedence for the
 vendor ids; see ``src/checkpoints.py`` for sourcing. The text encoder is
 stock Qwen3.5-9B from a comfy file.
+ComfyUI-saved checkpoint wrappers (``model.diffusion_model.*``), component prefixes
+(``diffusion_model.*`` / ``transformer.*``) and bare DiT keys are accepted.
 
 Flow convention matches ai-toolkit (sigma 1 = noise, target = noise - clean).
 See TRAINING_ADAPTERS.md for signed training-only LoRA adapters.
